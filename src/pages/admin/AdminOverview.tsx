@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   Building2,
   GraduationCap,
+  Users,
   Percent,
   UserCheck,
   UserX,
@@ -228,6 +229,20 @@ export function AdminOverview() {
     return periodSummary(periodRecords, scopedStudents);
   }, [branchFilter, periodRecords, scopedStudents]);
 
+  // Gender split of the students currently in scope (same scope as "Total Students")
+  const genderCounts = useMemo(() => {
+    let male = 0;
+    let female = 0;
+    for (const st of scopedStudents) {
+      const g = String((st as { gender?: string }).gender ?? "")
+        .trim()
+        .toLowerCase();
+      if (g === "m" || g.startsWith("male") || g.startsWith("boy")) male += 1;
+      else if (g === "f" || g.startsWith("female") || g.startsWith("girl")) female += 1;
+    }
+    return { male, female };
+  }, [scopedStudents]);
+
   const attendancePercent =
     summary.totalStudents > 0
       ? Math.round((summary.present / summary.totalStudents) * 1000) / 10
@@ -410,12 +425,18 @@ export function AdminOverview() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
             <DashboardKpiCard
               label="Total Students"
               value={summary.totalStudents}
               icon={GraduationCap}
               tone="mist"
+            />
+            <DashboardKpiCard
+              label="Male / Female"
+              value={`${genderCounts.male} / ${genderCounts.female}`}
+              icon={Users}
+              tone="cerulean"
             />
             <DashboardKpiCard
               label="Present"

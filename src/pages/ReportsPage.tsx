@@ -8,13 +8,12 @@ import {
   startOfMonth,
 } from "date-fns";
 import {
-  CalendarDays,
   CalendarRange,
   ChevronLeft,
   ChevronRight,
   Download,
   FileDown,
-  SlidersHorizontal,
+  RotateCcw,
 } from "lucide-react";
 import { useStore } from "../store/useStore";
 import { APP_SLUG } from "../lib/branding";
@@ -67,6 +66,14 @@ const PERIOD_OPTIONS: { id: ReportPeriod; label: string }[] = [
   { id: "custom", label: "Custom" },
 ];
 
+function FilterChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-full border border-morning bg-white px-2.5 py-1 text-xs font-medium text-cerulean">
+      {children}
+    </span>
+  );
+}
+
 const fieldLabelClass = "mb-1.5 block text-xs font-medium uppercase tracking-wide text-mist";
 const inputClass =
   "w-full rounded-lg border border-morning bg-white px-3 py-2 text-sm text-cerulean";
@@ -102,6 +109,7 @@ export function ReportsPage() {
   // Month-wise / day-wise download state
   const [exportMonth, setExportMonth] = useState(() => format(new Date(), "yyyy-MM"));
   const [exportDay, setExportDay] = useState(() => todayKey());
+  const [exportScope, setExportScope] = useState<"current" | "month" | "day">("current");
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
 
@@ -118,6 +126,36 @@ export function ReportsPage() {
         setCustomTo(current.to);
       }
       setPeriod(next);
+    });
+  };
+
+  const departmentName =
+    branchFilter === "all"
+      ? "All departments"
+      : (getBranch(branchFilter)?.name ?? "—");
+
+  const hasActiveFilters =
+    period !== "weekly" ||
+    selectedDateKey !== todayKey() ||
+    (session?.role === "admin" && branchFilter !== "all");
+
+  const toCustom = (nextFrom: string, nextTo: string) => {
+    startPeriodTransition(() => {
+      setCustomFrom(nextFrom || todayKey());
+      setCustomTo(nextTo || todayKey());
+      setPeriod("custom");
+    });
+  };
+  const onRangeFromChange = (value: string) => toCustom(value, to);
+  const onRangeToChange = (value: string) => toCustom(from, value);
+
+  const resetFilters = () => {
+    startPeriodTransition(() => {
+      setPeriod("weekly");
+      setSelectedDateKey(todayKey());
+      setVisibleMonth(new Date());
+      setShowCalendar(false);
+      if (session?.role === "admin") setBranchFilter("all");
     });
   };
 
@@ -415,6 +453,13 @@ export function ReportsPage() {
     void exportRange(exportDay, exportDay, formatReportDate(exportDay), exportDay, kind);
   };
 
+  const runExport = (kind: "csv" | "pdf") => {
+    if (exportScope === "month") return exportMonthReport(kind);
+    if (exportScope === "day") return exportDayReport(kind);
+    return kind === "csv" ? downloadCsv() : downloadPdf();
+  };
+  const exportBusy = exportScope === "current" ? loading : exporting;
+
   return (
     <div className="space-y-5 sm:space-y-6">
       <PageHeader
@@ -422,116 +467,80 @@ export function ReportsPage() {
         subtitle="Attendance report by department"
       />
 
-      {/* ============ Single unified filter ============ */}
-      <Card className="space-y-5">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-5 w-5 text-mist" aria-hidden />
+      {/* ============ Filters (same design as dashboard) ============ */}
+      <div className="rounded-2xl border border-morning/50 bg-white p-4 shadow-sm sm:p-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <Select
+            label="Period"
+            value={period}
+            onChange={(e) => selectPeriod(e.target.value as ReportPeriod)}
+            options={PERIOD_OPTIONS.map((p) => ({ value: p.id, label: p.label }))}
+          />
+
+          {session?.role === "admin" ? (
+            <Select
+              label="Department"
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value as "all" | string)}
+              options={[
+                { value: "all", label: "All departments" },
+                ...branches.map((b) => ({ value: b.id, label: b.name })),
+              ]}
+            />
+          ) : (
             <div>
-              <h2 className="font-medium text-cerulean">Filters</h2>
-              <p className="text-xs text-mist">
-                {label} · {formatReportDate(from)}
-                {from !== to && ` → ${formatReportDate(to)}`}
-                {loading ? " · Updating…" : ""}
+              <span className={fieldLabelClass}>Department</span>
+              <p className="rounded-lg border border-morning bg-white px-3 py-2 text-sm font-medium text-cerulean">
+                {getBranch(scopedBranch)?.name ?? "—"}
               </p>
             </div>
-          </div>
-        </div>
+          )}
 
-        {/* Row 1: period · department · date */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
-          <div className="lg:col-span-5">
-            <span className={fieldLabelClass}>Period</span>
-            <div className="inline-flex w-full flex-wrap rounded-full border border-morning bg-white p-1 shadow-sm">
-              {PERIOD_OPTIONS.map(({ id, label: lbl }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => selectPeriod(id)}
-                  className={`min-w-[4.5rem] flex-1 rounded-full px-3 py-2 text-sm font-medium transition-colors ${
-                    period === id
-                      ? "bg-cerulean text-white shadow-sm"
-                      : "text-mist hover:text-cerulean"
-                  }`}
-                >
-                  {lbl}
-                </button>
-              ))}
+          <div>
+            <label className={fieldLabelClass} htmlFor="report-date">
+              Report date
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="report-date"
+                type="date"
+                value={selectedDateKey}
+                max={todayKey()}
+                disabled={period === "custom"}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  setSelectedDateKey(e.target.value);
+                  setVisibleMonth(parseDateKey(e.target.value));
+                }}
+                className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-60`}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 px-2"
+                aria-label={showCalendar ? "Hide calendar" : "Show calendar"}
+                aria-pressed={showCalendar}
+                disabled={period === "custom"}
+                onClick={() => setShowCalendar((v) => !v)}
+              >
+                <CalendarRange className="h-4 w-4" />
+              </Button>
             </div>
           </div>
-
-          <div className="lg:col-span-3">
-            {session?.role === "admin" ? (
-              <Select
-                label="Department"
-                value={branchFilter}
-                onChange={(e) => setBranchFilter(e.target.value as "all" | string)}
-                options={[
-                  { value: "all", label: "All departments" },
-                  ...branches.map((b) => ({ value: b.id, label: b.name })),
-                ]}
-                wrapperClassName="w-full"
-              />
-            ) : (
-              <>
-                <span className={fieldLabelClass}>Department</span>
-                <p className="rounded-lg border border-morning bg-white px-3 py-2 text-sm font-medium text-cerulean">
-                  {getBranch(scopedBranch)?.name ?? "—"}
-                </p>
-              </>
-            )}
-          </div>
-
-          <div className="lg:col-span-4">
-            {period === "custom" ? (
-              <DateRangeFields
-                from={customFrom}
-                to={customTo}
-                onFromChange={(value) =>
-                  startPeriodTransition(() => setCustomFrom(value || todayKey()))
-                }
-                onToChange={(value) =>
-                  startPeriodTransition(() => setCustomTo(value || todayKey()))
-                }
-              />
-            ) : (
-              <>
-                <label className={fieldLabelClass} htmlFor="report-date">
-                  Date
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="report-date"
-                    type="date"
-                    value={selectedDateKey}
-                    max={todayKey()}
-                    onChange={(e) => {
-                      if (!e.target.value) return;
-                      setSelectedDateKey(e.target.value);
-                      setVisibleMonth(parseDateKey(e.target.value));
-                    }}
-                    className={inputClass}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0 px-2"
-                    aria-label={showCalendar ? "Hide calendar" : "Show calendar"}
-                    aria-pressed={showCalendar}
-                    onClick={() => setShowCalendar((v) => !v)}
-                  >
-                    <CalendarRange className="h-4 w-4" />
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
         </div>
 
-        {/* Optional calendar (non-custom periods) */}
+        <div className="mt-3">
+          <DateRangeFields
+            from={from}
+            to={to}
+            onFromChange={onRangeFromChange}
+            onToChange={onRangeToChange}
+          />
+        </div>
+
         {period !== "custom" && showCalendar && (
-          <div className="rounded-xl border border-morning p-3 sm:p-4">
+          <div className="mt-3 rounded-xl border border-morning p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-xs text-mist">Tap a day to change the report period</p>
               <div className="flex items-center gap-2">
@@ -604,134 +613,100 @@ export function ReportsPage() {
           </div>
         )}
 
-        {/* Row 2: downloads — current view · month-wise · day-wise */}
-        <div className="border-t border-morning pt-5">
-          <div className="mb-3 flex items-center gap-2">
-            <FileDown className="h-4 w-4 text-mist" aria-hidden />
-            <h3 className="text-sm font-medium text-cerulean">Download report</h3>
-            <span className="text-xs text-mist">· uses the selected department</span>
-          </div>
+        {/* Download: one scope picker, one CSV/PDF pair */}
+        <div className="mt-4 border-t border-morning/40 pt-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 xl:items-end">
+            <Select
+              label="Download"
+              value={exportScope}
+              onChange={(e) => setExportScope(e.target.value as "current" | "month" | "day")}
+              options={[
+                { value: "current", label: "Current view" },
+                { value: "month", label: "Month-wise" },
+                { value: "day", label: "Day-wise" },
+              ]}
+            />
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {/* Current view */}
-            <div className="flex flex-col rounded-xl border border-morning p-4">
-              <p className="mb-2 flex items-center gap-2 text-sm font-medium text-cerulean">
-                <CalendarRange className="h-4 w-4 text-mist" /> Current view
-              </p>
-              <p className="mb-3 text-xs text-mist">
-                {formatReportDate(from)}
-                {from !== to && ` → ${formatReportDate(to)}`}
-              </p>
-              <div className="mt-auto flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={downloadCsv}
-                  disabled={loading}
-                  className="inline-flex items-center gap-2"
-                >
-                  <Download className="h-4 w-4 shrink-0" /> CSV
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={downloadPdf}
-                  disabled={loading}
-                  className="inline-flex items-center gap-2"
-                >
-                  <FileDown className="h-4 w-4 shrink-0" /> PDF
-                </Button>
+            {exportScope === "current" && (
+              <div>
+                <span className={fieldLabelClass}>Range</span>
+                <p className="rounded-lg border border-morning bg-white px-3 py-2 text-sm text-cerulean">
+                  {formatReportDate(from)}
+                  {from !== to && ` → ${formatReportDate(to)}`}
+                </p>
               </div>
-            </div>
+            )}
 
-            {/* Month-wise */}
-            <div className="flex flex-col rounded-xl border border-morning p-4">
-              <p className="mb-2 flex items-center gap-2 text-sm font-medium text-cerulean">
-                <CalendarRange className="h-4 w-4 text-mist" /> Month-wise
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="px-2"
-                  aria-label="Previous month"
-                  onClick={() => shiftExportMonth(-1)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
+            {exportScope === "month" && (
+              <div>
+                <span className={fieldLabelClass}>Month</span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="px-2"
+                    aria-label="Previous month"
+                    onClick={() => shiftExportMonth(-1)}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <input
+                    type="month"
+                    value={exportMonth}
+                    max={format(new Date(), "yyyy-MM")}
+                    onChange={(e) => e.target.value && setExportMonth(e.target.value)}
+                    className={inputClass}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="px-2"
+                    aria-label="Next month"
+                    onClick={() => shiftExportMonth(1)}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {exportScope === "day" && (
+              <div>
+                <label className={fieldLabelClass} htmlFor="export-day">
+                  Day
+                </label>
                 <input
-                  type="month"
-                  value={exportMonth}
-                  max={format(new Date(), "yyyy-MM")}
-                  onChange={(e) => e.target.value && setExportMonth(e.target.value)}
+                  id="export-day"
+                  type="date"
+                  value={exportDay}
+                  max={todayKey()}
+                  onChange={(e) => e.target.value && setExportDay(e.target.value)}
                   className={inputClass}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="px-2"
-                  aria-label="Next month"
-                  onClick={() => shiftExportMonth(1)}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2 md:mt-auto md:pt-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={exporting}
-                  className="inline-flex items-center gap-2"
-                  onClick={() => exportMonthReport("csv")}
-                >
-                  <Download className="h-4 w-4" /> CSV
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={exporting}
-                  className="inline-flex items-center gap-2"
-                  onClick={() => exportMonthReport("pdf")}
-                >
-                  <FileDown className="h-4 w-4" /> PDF
-                </Button>
-              </div>
-            </div>
+            )}
 
-            {/* Day-wise */}
-            <div className="flex flex-col rounded-xl border border-morning p-4">
-              <p className="mb-2 flex items-center gap-2 text-sm font-medium text-cerulean">
-                <CalendarDays className="h-4 w-4 text-mist" /> Day-wise
-              </p>
-              <input
-                type="date"
-                value={exportDay}
-                max={todayKey()}
-                onChange={(e) => e.target.value && setExportDay(e.target.value)}
-                className={inputClass}
-              />
-              <div className="mt-3 flex flex-wrap gap-2 md:mt-auto md:pt-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={exporting}
-                  className="inline-flex items-center gap-2"
-                  onClick={() => exportDayReport("csv")}
-                >
-                  <Download className="h-4 w-4" /> CSV
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={exporting}
-                  className="inline-flex items-center gap-2"
-                  onClick={() => exportDayReport("pdf")}
-                >
-                  <FileDown className="h-4 w-4" /> PDF
-                </Button>
-              </div>
+            <div className="flex gap-2 sm:col-span-2 xl:col-span-1">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={exportBusy}
+                className="inline-flex flex-1 items-center justify-center gap-2"
+                onClick={() => runExport("csv")}
+              >
+                <Download className="h-4 w-4 shrink-0" /> CSV
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={exportBusy}
+                className="inline-flex flex-1 items-center justify-center gap-2"
+                onClick={() => runExport("pdf")}
+              >
+                <FileDown className="h-4 w-4 shrink-0" /> PDF
+              </Button>
             </div>
           </div>
 
@@ -741,7 +716,30 @@ export function ReportsPage() {
             </p>
           )}
         </div>
-      </Card>
+
+        {/* Footer: active chips + reset */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-morning/40 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-mist">Showing:</span>
+            <FilterChip>{label}</FilterChip>
+            <FilterChip>{departmentName}</FilterChip>
+            <FilterChip>
+              {formatReportDate(from)}
+              {from !== to && ` → ${formatReportDate(to)}`}
+            </FilterChip>
+            {loading && <span className="text-xs text-mist">Updating…</span>}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={resetFilters}
+            disabled={!hasActiveFilters}
+          >
+            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+            Reset filters
+          </Button>
+        </div>
+      </div>
 
       {/* ============ Charts ============ */}
       <div
