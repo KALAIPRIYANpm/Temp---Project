@@ -797,8 +797,8 @@ export function ReportsPage() {
         </div>
       </div>
 
-      {/* ============ Charts ============ */}
-      <div
+     
+      {/* <div
         className={`grid grid-cols-1 gap-4 xl:grid-cols-2 ${loading ? "opacity-70 transition-opacity" : ""}`}
       >
         <ReportChartCard title="Attendance split" subtitle="Present vs absent in this period">
@@ -814,9 +814,9 @@ export function ReportsPage() {
             emptyLabel="No students in scope for this period."
           />
         </ReportChartCard>
-      </div>
+      </div> */}
 
-      {showBranchChart && (
+      {/* {showBranchChart && (
         <div className={loading ? "opacity-70 transition-opacity" : ""}>
           <ReportChartCard
             title="Department comparison"
@@ -825,7 +825,7 @@ export function ReportsPage() {
             <BranchBarChart data={branchTrend} />
           </ReportChartCard>
         </div>
-      )}
+      )} */}
     </div>
   );
 }
